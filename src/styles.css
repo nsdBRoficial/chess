@@ -656,8 +656,9 @@ body.cinematic-ui-hidden #hud-bottom {
     grid-column: span 3;
   }
 
-  /* Full-width Hide UI button */
-  #btn-hide-ui {
+  /* Full-width Hide UI and Show UI buttons */
+  #btn-hide-ui,
+  #btn-show-ui {
     grid-column: span 6;
   }
 
@@ -745,7 +746,12 @@ body.cinematic-ui-hidden #hud-bottom {
     font-size: 0.74rem;
   }
 
-  #btn-side-toggle {
+  #btn-side-toggle,
+  #btn-game-mode {
+    grid-column: span 6;
+  }
+
+  #btn-dove-mode {
     grid-column: span 6;
   }
 
@@ -754,4 +760,293 @@ body.cinematic-ui-hidden #hud-bottom {
     grid-column: span 3;
   }
 }
+
+/* =========================================================================
+   Play with a Dove (Pombo) Mode Styles
+   ========================================================================= */
+#btn-dove-mode {
+  background: linear-gradient(135deg, rgba(80, 105, 120, 0.45), rgba(40, 60, 75, 0.65));
+  border-color: rgba(120, 180, 200, 0.45);
+  color: #e4edf5;
+}
+
+#btn-dove-mode:hover {
+  background: linear-gradient(135deg, rgba(100, 135, 155, 0.6), rgba(50, 80, 100, 0.8));
+  border-color: #5bc0be;
+  color: #ffffff;
+  box-shadow: 0 0 14px rgba(91, 192, 190, 0.4);
+}
+
+#btn-dove-mode.dove-active {
+  background: linear-gradient(135deg, rgba(74, 124, 89, 0.65), rgba(30, 80, 60, 0.75));
+  border-color: #55d6be;
+  color: #f0fff4;
+  box-shadow: 0 0 18px rgba(85, 214, 190, 0.6), inset 0 0 10px rgba(85, 214, 190, 0.25);
+  animation: dovePulse 2.4s ease-in-out infinite alternate;
+}
+
+@keyframes dovePulse {
+  0% {
+    border-color: #55d6be;
+    box-shadow: 0 0 12px rgba(85, 214, 190, 0.4);
+  }
+  100% {
+    border-color: #f5d76e;
+    box-shadow: 0 0 22px rgba(245, 215, 110, 0.65);
+  }
+}
+
+/* Floating Dove Toast Notifications */
+.dove-toast {
+  position: fixed;
+  top: 76px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-20px);
+  z-index: 50;
+  background: rgba(14, 20, 28, 0.94);
+  border: 1.5px solid #55d6be;
+  border-radius: 999px;
+  padding: 10px 24px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #e6fdfa;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.85), 0 0 20px rgba(85, 214, 190, 0.35);
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+  opacity: 0;
+  transition: all 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+.dove-toast.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.dove-toast.rage {
+  border-color: #e63946;
+  color: #ffe5e5;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.85), 0 0 24px rgba(230, 57, 70, 0.6);
+  animation: doveShake 0.4s ease-in-out;
+}
+
+@keyframes doveShake {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  20%, 60% { transform: translateX(calc(-50% - 6px)) translateY(0); }
+  40%, 80% { transform: translateX(calc(-50% + 6px)) translateY(0); }
+}
+
+/* Dove Defeat Judgment Overlay */
+.dove-defeat-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(4, 6, 10, 0.82);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
+}
+
+.dove-defeat-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.dove-defeat-banner {
+  position: relative;
+  width: 100%;
+  max-width: 540px;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(230, 57, 70, 0.28), transparent 70%),
+    linear-gradient(180deg, rgba(20, 24, 32, 0.97) 0%, rgba(10, 12, 18, 0.98) 100%);
+  border: 2px solid #e63946;
+  border-radius: 12px;
+  padding: 30px 32px 28px;
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.95),
+    0 0 50px rgba(230, 57, 70, 0.35);
+  text-align: center;
+  transform: scale(0.92);
+  transition: transform 0.4s cubic-bezier(0.18, 1, 0.3, 1.2);
+}
+
+.dove-defeat-overlay.visible .dove-defeat-banner {
+  transform: scale(1);
+}
+
+.dove-defeat-ornament {
+  font-size: 0.72rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: #f7a399;
+  margin-bottom: 8px;
+}
+
+.dove-defeat-crown {
+  font-size: 3rem;
+  line-height: 1;
+  margin-bottom: 6px;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.6));
+}
+
+.dove-defeat-title {
+  font-size: 2.1rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #ffebeb;
+  text-shadow: 0 0 20px rgba(230, 57, 70, 0.6);
+  margin-bottom: 8px;
+}
+
+.dove-defeat-rule {
+  width: 80px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #e63946, transparent);
+  margin: 10px auto 14px;
+}
+
+.dove-defeat-quote {
+  font-style: italic;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: #ffcad4;
+  background: rgba(230, 57, 70, 0.12);
+  border-left: 3px solid #e63946;
+  border-radius: 4px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  text-align: left;
+}
+
+.dove-defeat-subtitle {
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color: #d1d5db;
+  margin-bottom: 16px;
+}
+
+.dove-defeat-subtitle strong {
+  color: #f87171;
+}
+
+.dove-defeat-stats {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 8px 16px;
+  margin-bottom: 22px;
+  font-size: 0.88rem;
+  color: #e5e7eb;
+}
+
+.dove-defeat-stats strong {
+  font-size: 1.25rem;
+  color: #55d6be;
+}
+
+.dove-defeat-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.dove-btn {
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-size: 0.86rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.dove-btn.primary {
+  background: linear-gradient(135deg, #e63946, #c1121f);
+  color: #ffffff;
+  box-shadow: 0 4px 16px rgba(230, 57, 70, 0.4);
+}
+
+.dove-btn.primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(230, 57, 70, 0.6);
+}
+
+.dove-btn.secondary {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #e5e7eb;
+}
+
+.dove-btn.secondary:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: #d4af37;
+  color: #f5d76e;
+  transform: translateY(-1px);
+}
+
+/* =========================================================================
+   Show UI button in Dove Mode (disabled by default, enabled when UI hidden)
+   ========================================================================= */
+#btn-show-ui {
+  display: none;
+}
+
+body.dove-mode-active #btn-show-ui {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#btn-show-ui.active {
+  background: rgba(212, 175, 55, 0.28);
+  border-color: var(--gold-bright);
+  color: var(--gold-bright);
+  box-shadow: 0 0 12px rgba(212, 175, 55, 0.45);
+}
+
+body.dove-mode-active #btn-game-mode {
+  display: none !important;
+}
+
+#btn-game-mode.active {
+  background: rgba(85, 120, 214, 0.25);
+  border-color: #70a1ff;
+  color: #dbe4ff;
+  box-shadow: 0 0 12px rgba(112, 161, 255, 0.35);
+}
+
+body.cinematic-ui-hidden.dove-mode-active #btn-show-ui {
+  display: inline-flex !important;
+  position: fixed;
+  top: 16px;
+  right: 20px;
+  z-index: 50;
+  pointer-events: auto !important;
+  opacity: 1 !important;
+  cursor: pointer;
+  background: rgba(14, 18, 28, 0.94);
+  border: 1px solid var(--gold);
+  color: var(--gold-bright);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.7);
+}
+
+@media (max-width: 768px) {
+  body.cinematic-ui-hidden.dove-mode-active #btn-show-ui {
+    top: 12px;
+    right: 12px;
+  }
+}
+
+
 

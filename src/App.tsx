@@ -138,6 +138,22 @@ export default function App() {
           </button>
           <button
             className="hud-btn"
+            id="btn-dove-mode"
+            title="Play with a Dove: As pretas são substituídas por um Pombo! Jogue SOMENTE movimentos errados!"
+            onClick={() => setMobileSheetOpen(false)}
+          >
+            🕊️ Play with a Dove
+          </button>
+          <button
+            className="hud-btn"
+            id="btn-game-mode"
+            title="Alternar entre 1 Jogador (vs IA) e 2 Jogadores no mesmo computador (revezando o mouse)"
+            onClick={() => setMobileSheetOpen(false)}
+          >
+            👥 2 Jogadores (Local)
+          </button>
+          <button
+            className="hud-btn"
             id="btn-ai-move"
             title="Let the AI make the next move immediately"
             onClick={() => setMobileSheetOpen(false)}
@@ -199,6 +215,28 @@ export default function App() {
           >
             Hide UI [H]
           </button>
+          <button
+            className="hud-btn"
+            id="btn-show-ui"
+            title="Habilitar movimentações e dicas no Modo Pombo"
+            disabled
+            onClick={() => {
+              setMobileSheetOpen(false);
+              const win = window as unknown as {
+                wizardChess?: {
+                  toggleUI?: (force?: boolean) => void;
+                  toggleDoveHints?: (force?: boolean) => void;
+                  isDoveMode?: () => boolean;
+                };
+              };
+              win.wizardChess?.toggleUI?.(false);
+              if (win.wizardChess?.isDoveMode?.()) {
+                win.wizardChess?.toggleDoveHints?.();
+              }
+            }}
+          >
+            Show UI
+          </button>
 
           <div className="mobile-sheet-hint">
             <strong>Touch:</strong> Tap Piece to Move &nbsp;•&nbsp; 1-Finger Drag: Orbit &nbsp;•&nbsp; 2-Finger Drag: Pan &nbsp;•&nbsp; Pinch: Zoom
@@ -231,6 +269,35 @@ export default function App() {
             </button>
             <button className="checkmate-btn secondary" id="btn-checkmate-dismiss">
               Dismiss
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div id="dove-toast" className="dove-toast" aria-live="polite"></div>
+
+      <div id="dove-defeat-overlay" className="dove-defeat-overlay" role="dialog" aria-modal="true" aria-hidden="true">
+        <div className="dove-defeat-banner">
+          <div className="dove-defeat-ornament">✦ &nbsp; PIGEON FURY &nbsp; ✦</div>
+          <div className="dove-defeat-crown">🕊️💩</div>
+          <div className="dove-defeat-title">O Pombo Venceu!</div>
+          <div className="dove-defeat-rule"></div>
+          <div className="dove-defeat-quote">
+            “Jogar xadrez com um pombo é inútil: ele caga no tabuleiro, bate as asas, derruba todas as peças e sai cantando vitória!”
+          </div>
+          <div className="dove-defeat-subtitle">
+            O pombo entrou em fúria, cagou no tabuleiro, bateu as asas e derrubou todas as peças. Você perdeu!
+          </div>
+          <div className="dove-defeat-stats">
+            <span>Movimentos resistidos:</span>
+            <strong id="dove-absurd-count">0</strong>
+          </div>
+          <div className="dove-defeat-actions">
+            <button type="button" className="dove-btn primary" id="btn-dove-retry">
+              🔄 Jogar de Novo com o Pombo
+            </button>
+            <button type="button" className="dove-btn secondary" id="btn-dove-exit">
+              ♔ Voltar ao Xadrez Normal
             </button>
           </div>
         </div>

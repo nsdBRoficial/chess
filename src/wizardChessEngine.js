@@ -1162,27 +1162,51 @@ export function initWizardChess() {
 
       async function loadGltfModel(baseName) {
         let arrayBuffer = null;
-        try {
-          const resB64 = await fetch(`./assets/glb/${baseName}.glb.gz.b64`);
-          if (resB64.ok) {
-            const b64Text = (await resB64.text()).trim();
-            if (b64Text.length > 64) {
-              const binStr = atob(b64Text);
-              const gzBytes = new Uint8Array(binStr.length);
-              for (let i = 0; i < binStr.length; i++) {
-                gzBytes[i] = binStr.charCodeAt(i);
+        const b64Candidates = [
+          `./assets/glb/${baseName}.glb.gz.b64`,
+          `/assets/glb/${baseName}.glb.gz.b64`,
+          `assets/glb/${baseName}.glb.gz.b64`
+        ];
+
+        for (const url of b64Candidates) {
+          try {
+            const resB64 = await fetch(url);
+            if (resB64.ok) {
+              const b64Text = (await resB64.text()).trim();
+              if (b64Text.length > 64) {
+                const binStr = atob(b64Text);
+                const gzBytes = new Uint8Array(binStr.length);
+                for (let i = 0; i < binStr.length; i++) {
+                  gzBytes[i] = binStr.charCodeAt(i);
+                }
+                const ds = new DecompressionStream('gzip');
+                const stream = new Blob([gzBytes]).stream().pipeThrough(ds);
+                arrayBuffer = await new Response(stream).arrayBuffer();
+                if (arrayBuffer && arrayBuffer.byteLength > 0) break;
               }
-              const ds = new DecompressionStream('gzip');
-              const stream = new Blob([gzBytes]).stream().pipeThrough(ds);
-              arrayBuffer = await new Response(stream).arrayBuffer();
             }
-          }
-        } catch (e) {}
+          } catch (e) {}
+        }
 
         if (!arrayBuffer) {
-          const resGlb = await fetch(`./assets/glb/${baseName}.glb`);
-          if (!resGlb.ok) throw new Error(`Failed to fetch ${baseName}`);
-          arrayBuffer = await resGlb.arrayBuffer();
+          const glbCandidates = [
+            `./assets/glb/${baseName}.glb`,
+            `/assets/glb/${baseName}.glb`,
+            `assets/glb/${baseName}.glb`
+          ];
+          for (const url of glbCandidates) {
+            try {
+              const resGlb = await fetch(url);
+              if (resGlb.ok) {
+                arrayBuffer = await resGlb.arrayBuffer();
+                if (arrayBuffer && arrayBuffer.byteLength > 0) break;
+              }
+            } catch (e) {}
+          }
+        }
+
+        if (!arrayBuffer) {
+          throw new Error(`Failed to fetch 3D model: ${baseName}`);
         }
 
         return new Promise((resolve, reject) => {
@@ -1445,6 +1469,19 @@ export function initWizardChess() {
     let playerColor = 'w';   // 'w' | 'b' | 'spectator'
     let aiAutoPlay = true;
     let aiTimer = null;
+
+    // Play with a Dove (Pombo) Mode State
+    let doveMode = false;
+    let doveHintsVisible = false;
+    let doveModel = null;
+    let doveR = 1;
+    let doveC = 3;
+    let doveAbsurdMoves = 0;
+    let doveRageState = null;
+    let doveTurnTimer = null;
+    let poopSplats = [];
+    let toppledPieces = [];
+    let doveSoundContext = null;
 
     // Multiplayer State
     let roomCode = null;
@@ -1738,6 +1775,1149 @@ export function initWizardChess() {
       return true;
     }
 
+    // =========================================================================
+    // Play with a Dove (Pombo) Mechanics, Audio, Model, and Animations
+    // =========================================================================
+    function getAudioCtx() {
+      if (!doveSoundContext && typeof window !== 'undefined') {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx) {
+          doveSoundContext = new AudioCtx();
+        }
+      }
+      if (doveSoundContext && doveSoundContext.state === 'suspended') {
+        doveSoundContext.resume().catch(() => {});
+      }
+      return doveSoundContext;
+    }
+
+    function playDoveSound(type) {
+      try {
+        const ctx = getAudioCtx();
+        if (!ctx) return;
+        const now = ctx.currentTime;
+        if (type === 'coo') {
+          const osc1 = ctx.createOscillator();
+          const gain1 = ctx.createGain();
+          osc1.type = 'sine';
+          osc1.frequency.setValueAtTime(330, now);
+          osc1.frequency.exponentialRampToValueAtTime(270, now + 0.32);
+          gain1.gain.setValueAtTime(0, now);
+          gain1.gain.linearRampToValueAtTime(0.18, now + 0.05);
+          gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+          osc1.connect(gain1);
+          gain1.connect(ctx.destination);
+          osc1.start(now);
+          osc1.stop(now + 0.36);
+
+          const osc2 = ctx.createOscillator();
+          const gain2 = ctx.createGain();
+          osc2.type = 'sine';
+          osc2.frequency.setValueAtTime(260, now + 0.12);
+          osc2.frequency.exponentialRampToValueAtTime(310, now + 0.3);
+          osc2.frequency.exponentialRampToValueAtTime(240, now + 0.48);
+          gain2.gain.setValueAtTime(0, now + 0.12);
+          gain2.gain.linearRampToValueAtTime(0.16, now + 0.18);
+          gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+          osc2.connect(gain2);
+          gain2.connect(ctx.destination);
+          osc2.start(now + 0.12);
+          osc2.stop(now + 0.52);
+        } else if (type === 'flap') {
+          const bufSize = Math.floor(ctx.sampleRate * 0.16);
+          const buffer = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+          const data = buffer.getChannelData(0);
+          for (let i = 0; i < bufSize; i++) {
+            data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufSize * 0.35));
+          }
+          const noise = ctx.createBufferSource();
+          noise.buffer = buffer;
+          const filter = ctx.createBiquadFilter();
+          filter.type = 'bandpass';
+          filter.frequency.setValueAtTime(420, now);
+          filter.Q.setValueAtTime(2.2, now);
+          const gain = ctx.createGain();
+          gain.gain.setValueAtTime(0.28, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+          noise.connect(filter);
+          filter.connect(gain);
+          gain.connect(ctx.destination);
+          noise.start(now);
+        } else if (type === 'splat') {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(220, now);
+          osc.frequency.exponentialRampToValueAtTime(48, now + 0.16);
+          gain.gain.setValueAtTime(0.35, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now);
+          osc.stop(now + 0.24);
+        } else if (type === 'crash') {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(160, now);
+          osc.frequency.exponentialRampToValueAtTime(32, now + 0.42);
+          gain.gain.setValueAtTime(0.38, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.48);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now);
+          osc.stop(now + 0.5);
+        } else if (type === 'screech') {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(750, now);
+          osc.frequency.linearRampToValueAtTime(1450, now + 0.14);
+          osc.frequency.linearRampToValueAtTime(600, now + 0.38);
+          gain.gain.setValueAtTime(0.32, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now);
+          osc.stop(now + 0.45);
+        } else if (type === 'gulp') {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(170, now);
+          osc.frequency.exponentialRampToValueAtTime(390, now + 0.15);
+          gain.gain.setValueAtTime(0.35, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now);
+          osc.stop(now + 0.3);
+        }
+      } catch (err) {}
+    }
+
+    function showDoveToast(msg, isRage = false) {
+      const toast = document.getElementById('dove-toast');
+      if (!toast) return;
+      toast.textContent = msg;
+      toast.className = 'dove-toast visible' + (isRage ? ' rage' : '');
+      clearTimeout(toast._timer);
+      toast._timer = setTimeout(() => {
+        toast.classList.remove('visible');
+      }, isRage ? 4500 : 2600);
+    }
+
+    function createDove3DModel() {
+      const doveGroup = new THREE.Group();
+      doveGroup.name = 'PigeonDove';
+
+      const featherGreyMat = new THREE.MeshStandardMaterial({
+        color: 0x8a94a2,
+        roughness: 0.72,
+        metalness: 0.05
+      });
+      const breastLightMat = new THREE.MeshStandardMaterial({
+        color: 0xc8d0db,
+        roughness: 0.65,
+        metalness: 0.05
+      });
+      const neckSheenMat = new THREE.MeshStandardMaterial({
+        color: 0x3d7054,
+        roughness: 0.28,
+        metalness: 0.55,
+        emissive: 0x1a452a,
+        emissiveIntensity: 0.35
+      });
+      const beakOrangeMat = new THREE.MeshStandardMaterial({
+        color: 0xf4a261,
+        roughness: 0.35,
+        metalness: 0.05
+      });
+      const eyeRingMat = new THREE.MeshStandardMaterial({
+        color: 0xffb703,
+        roughness: 0.25
+      });
+      const pupilMat = new THREE.MeshBasicMaterial({ color: 0x0a0a0a });
+      const wingBarDarkMat = new THREE.MeshStandardMaterial({
+        color: 0x2b303a,
+        roughness: 0.8
+      });
+      const legFootMat = new THREE.MeshStandardMaterial({
+        color: 0xe76f51,
+        roughness: 0.4
+      });
+
+      const bodyGroup = new THREE.Group();
+
+      const torsoGeo = new THREE.SphereGeometry(0.25, 24, 20);
+      torsoGeo.scale(0.88, 0.96, 1.28);
+      const torsoMesh = new THREE.Mesh(torsoGeo, featherGreyMat);
+      torsoMesh.rotation.x = 0.16;
+      torsoMesh.position.set(0, 0.28, 0);
+      torsoMesh.castShadow = true;
+      torsoMesh.receiveShadow = true;
+      bodyGroup.add(torsoMesh);
+
+      const breastGeo = new THREE.SphereGeometry(0.20, 20, 18);
+      breastGeo.scale(0.92, 1.08, 0.95);
+      const breastMesh = new THREE.Mesh(breastGeo, breastLightMat);
+      breastMesh.position.set(0, 0.30, 0.14);
+      breastMesh.castShadow = true;
+      breastMesh.receiveShadow = true;
+      bodyGroup.add(breastMesh);
+
+      const neckGeo = new THREE.CylinderGeometry(0.105, 0.145, 0.19, 20);
+      const neckMesh = new THREE.Mesh(neckGeo, neckSheenMat);
+      neckMesh.position.set(0, 0.44, 0.13);
+      neckMesh.rotation.x = -0.15;
+      neckMesh.castShadow = true;
+      neckMesh.receiveShadow = true;
+      bodyGroup.add(neckMesh);
+
+      const headPivot = new THREE.Group();
+      headPivot.position.set(0, 0.56, 0.16);
+
+      const headGeo = new THREE.SphereGeometry(0.105, 20, 18);
+      const headMesh = new THREE.Mesh(headGeo, featherGreyMat);
+      headMesh.castShadow = true;
+      headPivot.add(headMesh);
+
+      const beakGeo = new THREE.ConeGeometry(0.038, 0.13, 14);
+      beakGeo.rotateX(Math.PI / 2);
+      const beakMesh = new THREE.Mesh(beakGeo, beakOrangeMat);
+      beakMesh.position.set(0, -0.015, 0.13);
+      beakMesh.castShadow = true;
+      headPivot.add(beakMesh);
+
+      const cereGeo = new THREE.SphereGeometry(0.024, 12, 12);
+      cereGeo.scale(1.2, 0.7, 1);
+      const cereMesh = new THREE.Mesh(cereGeo, breastLightMat);
+      cereMesh.position.set(0, 0.018, 0.095);
+      headPivot.add(cereMesh);
+
+      for (const side of [-1, 1]) {
+        const eyeRingGeo = new THREE.SphereGeometry(0.025, 14, 14);
+        const eyeRing = new THREE.Mesh(eyeRingGeo, eyeRingMat);
+        eyeRing.position.set(side * 0.082, 0.022, 0.048);
+
+        const pupilGeo = new THREE.SphereGeometry(0.014, 12, 12);
+        const pupil = new THREE.Mesh(pupilGeo, pupilMat);
+        pupil.position.set(side * 0.092, 0.022, 0.052);
+
+        headPivot.add(eyeRing);
+        headPivot.add(pupil);
+      }
+
+      const crestGeo = new THREE.ConeGeometry(0.022, 0.07, 8);
+      crestGeo.rotateX(-0.5);
+      const crestMesh = new THREE.Mesh(crestGeo, featherGreyMat);
+      crestMesh.position.set(0, 0.105, -0.02);
+      headPivot.add(crestMesh);
+
+      bodyGroup.add(headPivot);
+
+      const leftWingPivot = new THREE.Group();
+      leftWingPivot.position.set(-0.21, 0.32, 0.02);
+      const rightWingPivot = new THREE.Group();
+      rightWingPivot.position.set(0.21, 0.32, 0.02);
+
+      for (const [wingPivot, side] of [[leftWingPivot, -1], [rightWingPivot, 1]]) {
+        const wingGeo = new THREE.CylinderGeometry(0.04, 0.17, 0.52, 16);
+        wingGeo.scale(1, 1, 0.28);
+        wingGeo.rotateZ(side * 0.15);
+        wingGeo.rotateX(0.22);
+        const wingMesh = new THREE.Mesh(wingGeo, featherGreyMat);
+        wingMesh.position.set(side * 0.04, -0.12, -0.06);
+        wingMesh.castShadow = true;
+        wingMesh.receiveShadow = true;
+        wingPivot.add(wingMesh);
+
+        const bar1Geo = new THREE.BoxGeometry(0.12, 0.04, 0.08);
+        const bar1 = new THREE.Mesh(bar1Geo, wingBarDarkMat);
+        bar1.position.set(side * 0.05, -0.08, -0.08);
+        bar1.rotation.y = side * 0.15;
+        wingPivot.add(bar1);
+
+        const bar2Geo = new THREE.BoxGeometry(0.10, 0.035, 0.08);
+        const bar2 = new THREE.Mesh(bar2Geo, wingBarDarkMat);
+        bar2.position.set(side * 0.05, -0.16, -0.10);
+        bar2.rotation.y = side * 0.15;
+        wingPivot.add(bar2);
+
+        bodyGroup.add(wingPivot);
+      }
+
+      const tailPivot = new THREE.Group();
+      tailPivot.position.set(0, 0.26, -0.30);
+      const tailGeo = new THREE.BoxGeometry(0.24, 0.035, 0.34);
+      tailGeo.rotateX(-0.24);
+      const tailMesh = new THREE.Mesh(tailGeo, featherGreyMat);
+      tailMesh.castShadow = true;
+      tailPivot.add(tailMesh);
+
+      const tailTipGeo = new THREE.BoxGeometry(0.25, 0.036, 0.09);
+      tailTipGeo.rotateX(-0.24);
+      const tailTipMesh = new THREE.Mesh(tailTipGeo, wingBarDarkMat);
+      tailTipMesh.position.set(0, -0.03, -0.14);
+      tailPivot.add(tailTipMesh);
+
+      bodyGroup.add(tailPivot);
+
+      for (const side of [-1, 1]) {
+        const legPivot = new THREE.Group();
+        legPivot.position.set(side * 0.10, 0.14, 0.01);
+
+        const legGeo = new THREE.CylinderGeometry(0.014, 0.014, 0.15, 8);
+        const legMesh = new THREE.Mesh(legGeo, legFootMat);
+        legMesh.castShadow = true;
+        legPivot.add(legMesh);
+
+        for (let c = 0; c < 3; c++) {
+          const clawGeo = new THREE.CylinderGeometry(0.009, 0.006, 0.08, 6);
+          clawGeo.rotateX(Math.PI / 2);
+          const claw = new THREE.Mesh(clawGeo, legFootMat);
+          claw.position.set((c - 1) * 0.024, -0.075, 0.035);
+          claw.rotation.y = (c - 1) * 0.32;
+          claw.castShadow = true;
+          legPivot.add(claw);
+        }
+        const rearClawGeo = new THREE.CylinderGeometry(0.009, 0.006, 0.06, 6);
+        rearClawGeo.rotateX(Math.PI / 2);
+        const rearClaw = new THREE.Mesh(rearClawGeo, legFootMat);
+        rearClaw.position.set(0, -0.075, -0.03);
+        rearClaw.castShadow = true;
+        legPivot.add(rearClaw);
+
+        bodyGroup.add(legPivot);
+      }
+
+      doveGroup.add(bodyGroup);
+      doveGroup.scale.set(1.45, 1.45, 1.45);
+
+      return {
+        root: doveGroup,
+        bodyGroup,
+        headPivot,
+        leftWingPivot,
+        rightWingPivot,
+        tailPivot,
+        animTime: 0,
+        headBobIntensity: 1
+      };
+    }
+
+    const poopPuddleMat = new THREE.MeshStandardMaterial({
+      color: 0xedf3ef,
+      roughness: 0.16,
+      metalness: 0.08
+    });
+    const poopCoreMat = new THREE.MeshStandardMaterial({
+      color: 0x486b4a,
+      roughness: 0.24,
+      metalness: 0.06
+    });
+
+    function spawnPoopOnBoard(worldX, worldZ) {
+      const poopGroup = new THREE.Group();
+      poopGroup.position.set(worldX, BOARD_SURFACE_Y + 0.005 + poopSplats.length * 0.0003, worldZ);
+
+      const radius = 0.075 + Math.random() * 0.05;
+      const puddleGeo = new THREE.CircleGeometry(radius, 20);
+      puddleGeo.rotateX(-Math.PI / 2);
+      const puddleMesh = new THREE.Mesh(puddleGeo, poopPuddleMat);
+      puddleMesh.receiveShadow = true;
+      poopGroup.add(puddleMesh);
+
+      const coreGeo = new THREE.CircleGeometry(radius * 0.48, 16);
+      coreGeo.rotateX(-Math.PI / 2);
+      const coreMesh = new THREE.Mesh(coreGeo, poopCoreMat);
+      coreMesh.position.y = 0.001;
+      coreMesh.receiveShadow = true;
+      poopGroup.add(coreMesh);
+
+      const dropCount = 4 + Math.floor(Math.random() * 4);
+      for (let i = 0; i < dropCount; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = radius + 0.02 + Math.random() * 0.06;
+        const dropGeo = new THREE.CircleGeometry(0.012 + Math.random() * 0.016, 12);
+        dropGeo.rotateX(-Math.PI / 2);
+        const dropMesh = new THREE.Mesh(dropGeo, poopPuddleMat);
+        dropMesh.position.set(Math.cos(angle) * dist, 0.0005, Math.sin(angle) * dist);
+        poopGroup.add(dropMesh);
+      }
+
+      scene.add(poopGroup);
+      poopSplats.push(poopGroup);
+      playDoveSound('splat');
+      renderer.shadowMap.needsUpdate = true;
+    }
+
+    function clearPoops() {
+      for (const p of poopSplats) {
+        scene.remove(p);
+      }
+      poopSplats.length = 0;
+      renderer.shadowMap.needsUpdate = true;
+    }
+
+    function removeDoveFromBoard() {
+      if (doveModel && doveModel.root) {
+        scene.remove(doveModel.root);
+        doveModel = null;
+      }
+    }
+
+    function createHeadPoopMesh() {
+      const g = new THREE.Group();
+      const blobGeo = new THREE.SphereGeometry(0.065, 12, 10);
+      blobGeo.scale(1.2, 0.45, 1.2);
+      const blob = new THREE.Mesh(blobGeo, poopPuddleMat);
+      g.add(blob);
+
+      const coreGeo = new THREE.SphereGeometry(0.032, 10, 8);
+      coreGeo.scale(1, 0.5, 1);
+      const core = new THREE.Mesh(coreGeo, poopCoreMat);
+      core.position.y = 0.015;
+      g.add(core);
+
+      for (let i = 0; i < 4; i++) {
+        const angle = (i / 4) * Math.PI * 2;
+        const dripGeo = new THREE.CylinderGeometry(0.01, 0.005, 0.07, 6);
+        const drip = new THREE.Mesh(dripGeo, poopPuddleMat);
+        drip.position.set(Math.cos(angle) * 0.05, -0.035, Math.sin(angle) * 0.05);
+        g.add(drip);
+      }
+      return g;
+    }
+
+    function initDoveOnBoard() {
+      removeDoveFromBoard();
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          const p = boardState[r][c];
+          if (p && p.color === 'b') {
+            if (p.mesh) scene.remove(p.mesh);
+            boardState[r][c] = null;
+          }
+        }
+      }
+      doveR = 1;
+      doveC = 3;
+      doveModel = createDove3DModel();
+      doveModel.root.position.copy(boardToWorld(doveR, doveC));
+      doveModel.root.rotation.y = 0;
+      doveModel.root.userData = { isDove: true };
+      doveModel.root.traverse((child) => {
+        child.userData = { isDove: true };
+      });
+      scene.add(doveModel.root);
+      renderer.shadowMap.needsUpdate = true;
+    }
+
+    function toppleAllWhitePieces() {
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          const p = boardState[r][c];
+          if (p && p.color === 'w' && p.mesh && !p.isToppled) {
+            p.isToppled = true;
+            toppledPieces.push({
+              piece: p,
+              rotX: (Math.random() > 0.4 ? 1 : -1) * (1.35 + Math.random() * 0.35),
+              rotZ: (Math.random() - 0.5) * 1.8,
+              shiftX: (Math.random() - 0.5) * 0.22,
+              shiftZ: (Math.random() - 0.5) * 0.22,
+              progress: 0
+            });
+            spawnStoneShatter(p.mesh.position, 'w');
+          }
+        }
+      }
+    }
+
+    function updateToppledPieces(dt) {
+      for (let i = toppledPieces.length - 1; i >= 0; i--) {
+        const top = toppledPieces[i];
+        if (top.progress < 1) {
+          top.progress = Math.min(1, top.progress + dt * 4);
+          const ease = easeOutCubic(top.progress);
+          top.piece.mesh.rotation.x = top.rotX * ease;
+          top.piece.mesh.rotation.z = top.rotZ * ease;
+          top.piece.mesh.position.x += top.shiftX * dt * 2.5;
+          top.piece.mesh.position.z += top.shiftZ * dt * 2.5;
+          top.piece.mesh.position.y = BOARD_SURFACE_Y + 0.05 * (1 - ease);
+        }
+      }
+    }
+
+    function getDoveMovesForPiece(r, c) {
+      const piece = boardState[r]?.[c];
+      if (!piece) return [];
+      const legalChessMoves = getLegalMovesForPiece(r, c);
+      const moves = [];
+      for (let tr = 0; tr < 8; tr++) {
+        for (let tc = 0; tc < 8; tc++) {
+          if (tr === r && tc === c) continue;
+          const occ = boardState[tr]?.[tc];
+          if (occ && occ.color === 'w') continue;
+          const isLegal = legalChessMoves.some((m) => m.r === tr && m.c === tc);
+          const isDoveTarget = (tr === doveR && tc === doveC);
+          const inDoveRadius = !isDoveTarget && (Math.max(Math.abs(tr - doveR), Math.abs(tc - doveC)) <= 2);
+          moves.push({
+            r: tr,
+            c: tc,
+            isLegalChessMove: isLegal,
+            isDoveTarget,
+            inDoveRadius,
+            capture: Boolean(occ) || isDoveTarget
+          });
+        }
+      }
+      return moves;
+    }
+
+    function handleDoveModeMove(fromR, fromC, toR, toC) {
+      const piece = boardState[fromR]?.[fromC];
+      if (!piece || piece.color !== 'w' || isAnimatingMove || gameOver) return;
+
+      const targetPiece = boardState[toR]?.[toC];
+      if (targetPiece && targetPiece.color === 'w') {
+        selectedSquare = { r: toR, c: toC };
+        validMoves = getDoveMovesForPiece(toR, toC);
+        showSquareHighlights(toR, toC, validMoves);
+        return;
+      }
+
+      const legalMoves = getLegalMovesForPiece(fromR, fromC);
+      const isCorrectChessMove = legalMoves.some((m) => m.r === toR && m.c === toC);
+
+      clearSquareHighlights();
+      selectedSquare = null;
+      validMoves = [];
+
+      // 1. Tentar comer o pombo!
+      if (toR === doveR && toC === doveC) {
+        executeAttackDoveThenPoopOnHead(fromR, fromC, toR, toC);
+        return;
+      }
+
+      // 2. Movimento correto de xadrez: Pombo enlouquece, caga no tabuleiro e derruba todas as peças!
+      if (isCorrectChessMove) {
+        executeDoveForbiddenMoveThenRage(fromR, fromC, toR, toC);
+        return;
+      }
+
+      // 3. Aproximação no raio de 2 quadrados em qualquer direção: Pombo come a peça!
+      const distToDove = Math.max(Math.abs(toR - doveR), Math.abs(toC - doveC));
+      if (distToDove <= 2) {
+        executeDoveMoveNearPredatorZone(fromR, fromC, toR, toC);
+        return;
+      }
+
+      // 4. Movimento absurdo seguro (> 2 quadrados)
+      executeDoveAbsurdMove(fromR, fromC, toR, toC);
+    }
+
+    function executeAttackDoveThenPoopOnHead(fromR, fromC, toR, toC) {
+      const piece = boardState[fromR]?.[fromC];
+      if (!piece) return;
+
+      isAnimatingMove = true;
+      boardState[fromR][fromC] = null;
+
+      const startWorld = piece.mesh.position.clone();
+      const doveWorld = boardToWorld(doveR, doveC);
+      const dx = doveWorld.x - startWorld.x;
+      const dz = doveWorld.z - startWorld.z;
+      const dist = Math.hypot(dx, dz) || 1;
+      const stopDist = Math.max(0.18, dist * 0.72);
+      const targetWorld = new THREE.Vector3(
+        doveWorld.x - (dx / dist) * stopDist,
+        BOARD_SURFACE_Y,
+        doveWorld.z - (dz / dist) * stopDist
+      );
+
+      piece.mesh.rotation.y = Math.atan2(dx, dz);
+      playPieceClip(piece, 'Move', true, 0.1);
+
+      let elapsed = 0;
+      const chargeDuration = 0.45;
+
+      activeMoveTweens.push(function stepAttackDove(dt) {
+        elapsed += dt;
+        const u = Math.min(1, elapsed / chargeDuration);
+        const ease = easeOutCubic(u);
+        piece.mesh.position.lerpVectors(startWorld, targetWorld, ease);
+        if (u >= 1) {
+          piece.mesh.position.copy(targetWorld);
+          playPieceClip(piece, 'Idle', true, 0.15);
+          startPoopOnHeadSequence(piece);
+          return true;
+        }
+        return false;
+      });
+    }
+
+    function startPoopOnHeadSequence(piece) {
+      playDoveSound('screech');
+      playDoveSound('flap');
+      const doveStart = doveModel.root.position.clone();
+      const hoverPos = piece.mesh.position.clone();
+      hoverPos.y = BOARD_SURFACE_Y + 0.88;
+
+      let flyElapsed = 0;
+      const flyDuration = 0.35;
+
+      activeMoveTweens.push(function stepFlyHover(dt) {
+        flyElapsed += dt;
+        const u = Math.min(1, flyElapsed / flyDuration);
+        doveModel.root.position.lerpVectors(doveStart, hoverPos, easeOutCubic(u));
+        doveModel.leftWingPivot.rotation.z = Math.sin(flyElapsed * 50) * 1.15;
+        doveModel.rightWingPivot.rotation.z = -Math.sin(flyElapsed * 50) * 1.15;
+        if (u >= 1) {
+          doveModel.root.position.copy(hoverPos);
+          // O Pombo caga na cabeça da peça!
+          playDoveSound('splat');
+          const pieceHeight = PIECE_HEIGHTS[piece.type] || 0.45;
+          const headPoop = createHeadPoopMesh();
+          headPoop.position.set(0, pieceHeight * 0.88, 0);
+          piece.mesh.add(headPoop);
+          renderer.shadowMap.needsUpdate = true;
+
+          showDoveToast('🕊️💩 O Pombo cagou na cabeça da sua peça!', true);
+
+          startHumiliatedPieceTopple(piece, doveStart);
+          return true;
+        }
+        return false;
+      });
+    }
+
+    function startHumiliatedPieceTopple(piece, doveHomePos) {
+      piece.isToppled = true;
+      const rotTargetX = 1.45;
+      const rotTargetZ = (Math.random() - 0.5) * 0.8;
+      let toppleElapsed = 0;
+      const toppleDuration = 0.55;
+
+      playDoveSound('crash');
+      spawnStoneShatter(piece.mesh.position, 'w');
+
+      activeMoveTweens.push(function stepTopple(dt) {
+        toppleElapsed += dt;
+        const u = Math.min(1, toppleElapsed / toppleDuration);
+        const ease = easeOutCubic(u);
+        piece.mesh.rotation.x = rotTargetX * ease;
+        piece.mesh.rotation.z = rotTargetZ * ease;
+        piece.mesh.position.y = BOARD_SURFACE_Y + 0.05 * (1 - ease);
+
+        const returnEase = easeInOutCubic(u);
+        doveModel.root.position.lerpVectors(piece.mesh.position.clone().setY(BOARD_SURFACE_Y + 0.88), doveHomePos, returnEase);
+        doveModel.leftWingPivot.rotation.z = Math.sin(toppleElapsed * 25) * 0.6 * (1 - u);
+        doveModel.rightWingPivot.rotation.z = -Math.sin(toppleElapsed * 25) * 0.6 * (1 - u);
+
+        if (u >= 1) {
+          doveModel.root.position.copy(doveHomePos);
+          doveModel.leftWingPivot.rotation.z = 0;
+          doveModel.rightWingPivot.rotation.z = 0;
+          playDoveSound('coo');
+          checkRemainingWhitePiecesAfterDoveAction();
+          return true;
+        }
+        return false;
+      });
+    }
+
+    function executeDoveMoveNearPredatorZone(fromR, fromC, toR, toC) {
+      const piece = boardState[fromR]?.[fromC];
+      if (!piece) return;
+
+      isAnimatingMove = true;
+      boardState[fromR][fromC] = null;
+      boardState[toR][toC] = piece;
+      piece.r = toR;
+      piece.c = toC;
+
+      const startWorld = piece.mesh.position.clone();
+      const endWorld = boardToWorld(toR, toC);
+      playPieceClip(piece, 'Move', true, 0.1);
+
+      const duration = 0.45;
+      let elapsed = 0;
+
+      activeMoveTweens.push(function stepPiece(dt) {
+        elapsed += dt;
+        const u = Math.min(1, elapsed / duration);
+        const ease = easeOutCubic(u);
+        piece.mesh.position.lerpVectors(startWorld, endWorld, ease);
+        piece.mesh.position.y = BOARD_SURFACE_Y + Math.sin(ease * Math.PI) * 0.14;
+        if (u >= 1) {
+          piece.mesh.position.copy(endWorld);
+          playPieceClip(piece, 'Idle', true, 0.15);
+          startDoveDevourPieceSequence(piece, toR, toC);
+          return true;
+        }
+        return false;
+      });
+    }
+
+    function startDoveDevourPieceSequence(piece, toR, toC) {
+      playDoveSound('screech');
+      showDoveToast('🕊️🍽️ O Pombo atacou!', true);
+
+      const doveStart = doveModel.root.position.clone();
+      const targetPos = boardToWorld(toR, toC);
+      const dx = targetPos.x - doveStart.x;
+      const dz = targetPos.z - doveStart.z;
+      doveModel.root.rotation.y = Math.atan2(dx, dz);
+
+      let lungeElapsed = 0;
+      const lungeDuration = 0.48;
+      playDoveSound('flap');
+
+      activeMoveTweens.push(function stepLunge(dt) {
+        lungeElapsed += dt;
+        const u = Math.min(1, lungeElapsed / lungeDuration);
+        const ease = easeOutCubic(u);
+        doveModel.root.position.lerpVectors(doveStart, targetPos, ease);
+        doveModel.root.position.y = BOARD_SURFACE_Y + Math.sin(ease * Math.PI) * 0.35;
+        doveModel.leftWingPivot.rotation.z = Math.sin(lungeElapsed * 35) * 0.9;
+        doveModel.rightWingPivot.rotation.z = -Math.sin(lungeElapsed * 35) * 0.9;
+
+        if (u >= 1) {
+          doveModel.root.position.copy(targetPos);
+          doveModel.leftWingPivot.rotation.z = 0;
+          doveModel.rightWingPivot.rotation.z = 0;
+
+          // Bica e devora a peça!
+          doveModel.headPivot.rotation.x = 0.95;
+          playDoveSound('gulp');
+          playDoveSound('crash');
+          spawnStoneShatter(targetPos, 'w');
+
+          scene.remove(piece.mesh);
+          boardState[toR][toC] = null;
+
+          doveR = toR;
+          doveC = toC;
+
+          doveModel.bodyGroup.scale.set(1.28, 1.22, 1.28);
+          setTimeout(() => {
+            if (doveModel) {
+              doveModel.headPivot.rotation.x = 0;
+              doveModel.bodyGroup.scale.set(1, 1, 1);
+            }
+          }, 350);
+
+          playDoveSound('coo');
+          showDoveToast('🕊️🍽️ NHAC! O Pombo devorou a sua peça!');
+          checkRemainingWhitePiecesAfterDoveAction();
+          return true;
+        }
+        return false;
+      });
+    }
+
+    function checkRemainingWhitePiecesAfterDoveAction() {
+      const remainingWhite = [];
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          const p = boardState[r][c];
+          if (p && p.color === 'w' && !p.isToppled && p.mesh) {
+            remainingWhite.push(p);
+          }
+        }
+      }
+
+      if (remainingWhite.length === 0) {
+        gameOver = true;
+        isAnimatingMove = false;
+        const defOverlay = document.getElementById('dove-defeat-overlay');
+        if (defOverlay) {
+          defOverlay.classList.add('visible');
+          const titleEl = defOverlay.querySelector('.dove-defeat-title');
+          if (titleEl) titleEl.textContent = 'O Pombo Devorou Seu Exército!';
+          const subEl = defOverlay.querySelector('.dove-defeat-subtitle');
+          if (subEl) subEl.innerHTML = 'Suas peças foram <strong>devoradas pelo Pombo</strong>!';
+        }
+      } else {
+        currentTurn = 'w';
+        isAnimatingMove = false;
+        updateTurnUI();
+      }
+    }
+
+    function executeDoveForbiddenMoveThenRage(fromR, fromC, toR, toC) {
+      const piece = boardState[fromR]?.[fromC];
+      if (!piece) {
+        triggerDoveRage();
+        return;
+      }
+
+      isAnimatingMove = true;
+      boardState[fromR][fromC] = null;
+      boardState[toR][toC] = piece;
+      piece.r = toR;
+      piece.c = toC;
+
+      const startWorld = piece.mesh.position.clone();
+      const endWorld = boardToWorld(toR, toC);
+      playPieceClip(piece, 'Move', true, 0.1);
+
+      const duration = 0.45;
+      let elapsed = 0;
+
+      activeMoveTweens.push(function stepForbidden(dt) {
+        elapsed += dt;
+        const u = Math.min(1, elapsed / duration);
+        const ease = easeOutCubic(u);
+        piece.mesh.position.lerpVectors(startWorld, endWorld, ease);
+        if (u >= 1) {
+          piece.mesh.position.copy(endWorld);
+          playPieceClip(piece, 'Idle', true, 0.15);
+          triggerDoveRage();
+          return true;
+        }
+        return false;
+      });
+    }
+
+    function triggerDoveRage() {
+      playDoveSound('screech');
+      showDoveToast('⚠️ O POMBO ENLOUQUECEU!', true);
+      smoothCameraTo(new THREE.Vector3(0, 3.4, 2.9), new THREE.Vector3(0, 0.85, 0), 1.2);
+      isAnimatingMove = true;
+      gameOver = true;
+      doveRageState = {
+        phase: 'shock',
+        elapsed: 0,
+        poopsDropped: 0,
+        nextPoopTime: 0.45,
+        piecesToppled: false
+      };
+    }
+
+    function executeDoveAbsurdMove(fromR, fromC, toR, toC) {
+      const piece = boardState[fromR]?.[fromC];
+      if (!piece) return;
+
+      isAnimatingMove = true;
+      boardState[fromR][fromC] = null;
+      boardState[toR][toC] = piece;
+      piece.r = toR;
+      piece.c = toC;
+
+      const startWorld = piece.mesh.position.clone();
+      const endWorld = boardToWorld(toR, toC);
+      playPieceClip(piece, 'Move', true, 0.1);
+
+      const duration = 0.5;
+      let elapsed = 0;
+
+      activeMoveTweens.push(function stepDoveMove(dt) {
+        elapsed += dt;
+        const u = Math.min(1, elapsed / duration);
+        const ease = easeOutCubic(u);
+        piece.mesh.position.lerpVectors(startWorld, endWorld, ease);
+        piece.mesh.position.y = BOARD_SURFACE_Y + Math.sin(ease * Math.PI) * 0.14;
+        if (u >= 1) {
+          piece.mesh.position.copy(endWorld);
+          playPieceClip(piece, 'Idle', true, 0.15);
+          isAnimatingMove = false;
+          onDoveAbsurdMoveComplete();
+          return true;
+        }
+        return false;
+      });
+    }
+
+    function onDoveAbsurdMoveComplete() {
+      doveAbsurdMoves++;
+      playDoveSound('coo');
+      if (doveModel) {
+        doveModel.headBobIntensity = 4;
+      }
+      const praises = [
+        'Pruuu!',
+        'Pruuu-pruuu!',
+        'Pruuu...',
+        'Currupaco!',
+        'Pruuu!'
+      ];
+      const msg = praises[(doveAbsurdMoves - 1) % praises.length];
+      showDoveToast(`🕊️ ${msg}`);
+
+      currentTurn = 'b';
+      updateTurnUI();
+
+      doveTurnTimer = setTimeout(() => {
+        doveTurnTimer = null;
+        if (!doveMode || gameOver) return;
+        performDoveAction();
+      }, 700);
+    }
+
+    function performDoveAction() {
+      if (!doveModel) return;
+      const candidates = [];
+      for (let tr = 0; tr < 4; tr++) {
+        for (let tc = 0; tc < 8; tc++) {
+          if (!boardState[tr][tc] && !(tr === doveR && tc === doveC)) {
+            candidates.push({ r: tr, c: tc });
+          }
+        }
+      }
+      const choice = candidates.length > 0
+        ? candidates[Math.floor(Math.random() * candidates.length)]
+        : { r: 1, c: 3 };
+      const targetWorld = boardToWorld(choice.r, choice.c);
+
+      playDoveSound('flap');
+      const startWorld = doveModel.root.position.clone();
+      let elapsed = 0;
+      const duration = 0.6;
+
+      activeMoveTweens.push(function stepDoveAction(dt) {
+        elapsed += dt;
+        const u = Math.min(1, elapsed / duration);
+        const ease = easeInOutCubic(u);
+        doveModel.root.position.lerpVectors(startWorld, targetWorld, ease);
+        doveModel.root.position.y = BOARD_SURFACE_Y + Math.sin(ease * Math.PI) * 0.28;
+        doveModel.leftWingPivot.rotation.z = Math.sin(elapsed * 25) * 0.7;
+        doveModel.rightWingPivot.rotation.z = -Math.sin(elapsed * 25) * 0.7;
+        if (u >= 1) {
+          doveR = choice.r;
+          doveC = choice.c;
+          doveModel.root.position.copy(targetWorld);
+          doveModel.leftWingPivot.rotation.z = 0;
+          doveModel.rightWingPivot.rotation.z = 0;
+          playDoveSound('coo');
+          currentTurn = 'w';
+          isAnimatingMove = false;
+          updateTurnUI();
+          return true;
+        }
+        return false;
+      });
+    }
+
+    function updateDoveAnimations(dt) {
+      if (!doveModel) return;
+      if (!doveRageState) {
+        doveModel.animTime += dt;
+        const t = doveModel.animTime;
+        doveModel.headBobIntensity = Math.max(1, doveModel.headBobIntensity - dt * 2.5);
+        doveModel.headPivot.position.z = 0.16 + Math.sin(t * 8) * 0.035 * doveModel.headBobIntensity;
+        doveModel.headPivot.position.y = 0.56 + Math.cos(t * 16) * 0.012 * doveModel.headBobIntensity;
+        doveModel.bodyGroup.scale.y = 1 + Math.sin(t * 3) * 0.02;
+        doveModel.bodyGroup.rotation.y = Math.sin(t * 1.4) * 0.06;
+      } else {
+        doveRageState.elapsed += dt;
+        const elapsed = doveRageState.elapsed;
+
+        if (elapsed < 0.8) {
+          doveModel.headPivot.position.y = 0.64;
+          doveModel.headPivot.rotation.x = -0.45;
+          doveModel.leftWingPivot.rotation.z = Math.sin(elapsed * 45) * 0.35;
+          doveModel.rightWingPivot.rotation.z = -Math.sin(elapsed * 45) * 0.35;
+        } else if (elapsed < 2.0) {
+          doveModel.leftWingPivot.rotation.z = Math.sin(elapsed * 55) * 1.25;
+          doveModel.rightWingPivot.rotation.z = -Math.sin(elapsed * 55) * 1.25;
+          const u = Math.min(1, (elapsed - 0.8) / 1.2);
+          const lift = easeOutCubic(u);
+          doveModel.root.position.y = BOARD_SURFACE_Y + lift * 1.35;
+          if (Math.floor(elapsed * 8) !== Math.floor((elapsed - dt) * 8)) playDoveSound('flap');
+        } else if (elapsed < 4.8) {
+          doveModel.leftWingPivot.rotation.z = Math.sin(elapsed * 50) * 1.15;
+          doveModel.rightWingPivot.rotation.z = -Math.sin(elapsed * 50) * 1.15;
+          const flightU = (elapsed - 2.0) / 2.8;
+          doveModel.root.position.x = Math.sin(flightU * Math.PI * 4) * 0.92;
+          doveModel.root.position.z = -0.9 + flightU * 1.95;
+          doveModel.root.position.y = BOARD_SURFACE_Y + 1.25 + Math.sin(flightU * Math.PI * 6) * 0.12;
+          doveModel.root.rotation.y = Math.cos(flightU * Math.PI * 4) * 0.75;
+          if (Math.floor(elapsed * 6) !== Math.floor((elapsed - dt) * 6)) playDoveSound('flap');
+
+          if (elapsed >= doveRageState.nextPoopTime && doveRageState.poopsDropped < 7) {
+            doveRageState.nextPoopTime = elapsed + 0.38;
+            doveRageState.poopsDropped++;
+            const dropX = doveModel.root.position.x + (Math.random() - 0.5) * 0.18;
+            const dropZ = doveModel.root.position.z + (Math.random() - 0.5) * 0.18;
+            spawnPoopOnBoard(dropX, dropZ);
+          }
+        } else if (elapsed < 6.8) {
+          const swoopU = (elapsed - 4.8) / 2.0;
+          doveModel.root.position.y = BOARD_SURFACE_Y + 0.18 + Math.sin(swoopU * Math.PI) * 0.08;
+          doveModel.root.position.x = (Math.random() - 0.5) * 0.15;
+          doveModel.root.position.z = -0.6 + swoopU * 2.3;
+          doveModel.root.rotation.y = 0;
+          doveModel.leftWingPivot.rotation.z = Math.sin(elapsed * 60) * 1.3;
+          doveModel.rightWingPivot.rotation.z = -Math.sin(elapsed * 60) * 1.3;
+
+          if (!doveRageState.piecesToppled) {
+            doveRageState.piecesToppled = true;
+            toppleAllWhitePieces();
+            playDoveSound('crash');
+          }
+        } else {
+          if (doveRageState.phase !== 'strut_victory') {
+            doveRageState.phase = 'strut_victory';
+            doveModel.root.position.set(0, BOARD_SURFACE_Y, 0);
+            doveModel.root.rotation.set(0, 0, 0);
+            playDoveSound('coo');
+            isAnimatingMove = false;
+          }
+          doveModel.root.rotation.y += 1.6 * dt;
+          doveModel.headPivot.position.z = 0.16 + Math.sin(elapsed * 10) * 0.06;
+          doveModel.headPivot.position.y = 0.58 + Math.cos(elapsed * 20) * 0.02;
+          doveModel.leftWingPivot.rotation.z = 0.1 + Math.sin(elapsed * 4) * 0.15;
+          doveModel.rightWingPivot.rotation.z = -0.1 - Math.sin(elapsed * 4) * 0.15;
+          doveModel.bodyGroup.scale.set(1.18, 1.18, 1.18);
+
+          const defOverlay = document.getElementById('dove-defeat-overlay');
+          if (defOverlay && !defOverlay.classList.contains('visible')) {
+            defOverlay.classList.add('visible');
+            const countEl = document.getElementById('dove-absurd-count');
+            if (countEl) countEl.textContent = String(doveAbsurdMoves);
+          }
+        }
+      }
+    }
+
+    function toggleDoveHints(force) {
+      if (!doveMode) return;
+      doveHintsVisible = typeof force === 'boolean' ? force : !doveHintsVisible;
+      const btnShow = document.getElementById('btn-show-ui');
+      if (btnShow) {
+        if (doveHintsVisible) {
+          btnShow.classList.add('active');
+          btnShow.textContent = 'Show UI [Movimentos: ON]';
+          btnShow.title = 'Ocultar movimentações e dicas';
+        } else {
+          btnShow.classList.remove('active');
+          btnShow.textContent = 'Show UI';
+          btnShow.title = 'Habilitar movimentações e dicas no Modo Pombo';
+        }
+      }
+      if (selectedSquare) {
+        validMoves = getDoveMovesForPiece(selectedSquare.r, selectedSquare.c);
+        showSquareHighlights(selectedSquare.r, selectedSquare.c, validMoves);
+      }
+    }
+
+    function toggleGameMode(targetMode) {
+      if (doveMode) {
+        toggleDoveMode(false);
+      }
+      const nextMode = targetMode || (gameMode === 'single' ? 'local' : 'single');
+      gameMode = nextMode;
+
+      if (aiTimer) {
+        clearTimeout(aiTimer);
+        aiTimer = null;
+      }
+
+      const btnGameMode = document.getElementById('btn-game-mode');
+      const btnSideToggle = document.getElementById('btn-side-toggle');
+      const btnAiMove = document.getElementById('btn-ai-move');
+
+      if (gameMode === 'local') {
+        if (btnGameMode) {
+          btnGameMode.classList.add('active');
+          btnGameMode.textContent = '🤖 1 Jogador (vs IA)';
+          btnGameMode.title = 'Alternar para 1 Jogador contra a IA';
+        }
+        if (btnSideToggle) {
+          btnSideToggle.style.display = 'none';
+        }
+        if (btnAiMove) {
+          btnAiMove.textContent = 'Dica da IA';
+        }
+        showDoveToast('👥 2 Jogadores (Mesmo PC) — Vez das Brancas');
+      } else {
+        gameMode = 'single';
+        if (btnGameMode) {
+          btnGameMode.classList.remove('active');
+          btnGameMode.textContent = '👥 2 Jogadores (Local)';
+          btnGameMode.title = 'Alternar entre 1 Jogador (vs IA) e 2 Jogadores no mesmo computador (revezando o mouse)';
+        }
+        if (btnSideToggle) {
+          btnSideToggle.style.display = 'inline-flex';
+        }
+        if (btnAiMove) {
+          btnAiMove.textContent = 'AI Move';
+        }
+        showDoveToast('🤖 1 Jogador (vs IA) ativado');
+      }
+
+      resetChessBoard(true, false);
+      updateTurnUI();
+    }
+
+    function toggleDoveMode(forceState) {
+      const nextState = typeof forceState === 'boolean' ? forceState : !doveMode;
+      doveMode = nextState;
+      const btnDove = document.getElementById('btn-dove-mode');
+      if (btnDove) {
+        if (doveMode) {
+          btnDove.classList.add('dove-active');
+          btnDove.textContent = '🕊️ Pombo Ativo';
+        } else {
+          btnDove.classList.remove('dove-active');
+          btnDove.textContent = '🕊️ Play with a Dove';
+        }
+      }
+      if (doveMode) {
+        startDoveMode();
+      } else {
+        document.body.classList.remove('dove-mode-active');
+        doveHintsVisible = false;
+        const btnShow = document.getElementById('btn-show-ui');
+        if (btnShow) {
+          btnShow.classList.remove('active');
+          btnShow.textContent = 'Show UI';
+        }
+        const btnGameMode = document.getElementById('btn-game-mode');
+        if (btnGameMode) {
+          btnGameMode.style.display = 'inline-flex';
+        }
+        removeDoveFromBoard();
+        clearPoops();
+        toppledPieces.length = 0;
+        doveRageState = null;
+        document.getElementById('dove-defeat-overlay')?.classList.remove('visible');
+        resetChessBoard(true, false);
+      }
+    }
+
+    function startDoveMode() {
+      doveMode = true;
+      doveHintsVisible = false;
+      document.body.classList.add('dove-mode-active');
+      const btnShow = document.getElementById('btn-show-ui');
+      if (btnShow) {
+        btnShow.disabled = false;
+        btnShow.classList.remove('active');
+        btnShow.textContent = 'Show UI';
+      }
+      const btnGameMode = document.getElementById('btn-game-mode');
+      if (btnGameMode) {
+        btnGameMode.style.display = 'none';
+      }
+      playerColor = 'w';
+      gameMode = 'single';
+      clearPoops();
+      toppledPieces.length = 0;
+      doveRageState = null;
+      doveAbsurdMoves = 0;
+      document.getElementById('dove-defeat-overlay')?.classList.remove('visible');
+      const btnDove = document.getElementById('btn-dove-mode');
+      if (btnDove) {
+        btnDove.classList.add('dove-active');
+        btnDove.textContent = '🕊️ Pombo Ativo';
+      }
+      resetChessBoard(true, false);
+      showDoveToast('🕊️ Modo Pombo');
+    }
+
     function resetChessBoard(orientCamera = true, preserveScript = false) {
       if (aiTimer) {
         clearTimeout(aiTimer);
@@ -1771,12 +2951,20 @@ export function initWizardChess() {
       for (let c = 0; c < 8; c++) {
         boardState[7][c] = instantiatePiece(backRow[c], 'w', 7, c);
         boardState[6][c] = instantiatePiece('pawn', 'w', 6, c);
-        boardState[1][c] = instantiatePiece('pawn', 'b', 1, c);
-        boardState[0][c] = instantiatePiece(backRow[c], 'b', 0, c);
+        if (!doveMode) {
+          boardState[1][c] = instantiatePiece('pawn', 'b', 1, c);
+          boardState[0][c] = instantiatePiece(backRow[c], 'b', 0, c);
+        }
+      }
+
+      if (doveMode) {
+        initDoveOnBoard();
+      } else {
+        removeDoveFromBoard();
       }
 
       if (orientCamera) {
-        const viewSide = playerColor === 'b' ? 'b' : 'w';
+        const viewSide = gameMode === 'local' ? 'w' : (playerColor === 'b' ? 'b' : 'w');
         playerCamSide = viewSide;
         setActiveCamButton('btn-cam-player');
         setCameraForSide(viewSide, false);
@@ -1978,8 +3166,18 @@ export function initWizardChess() {
       }
     }
 
+    // Reference palette for dove zones
+    const DOVE_ZONE_PALETTE = {
+      target: 0xb5179e,
+      danger: 0xf4a261,
+      forbidden: 0xe63946
+    };
+
     function showSquareHighlights(r, c, moves) {
       clearSquareHighlights();
+
+      // Mantenha a cor de seleção na peça selecionada:
+      // O jogador sempre vê o anel dourado na peça que escolheu (tanto no modo pombo quanto no normal)
       const selGeo = new THREE.RingGeometry(0.115, 0.155, 32);
       selGeo.rotateX(-Math.PI / 2);
       const selMat = new THREE.MeshBasicMaterial({ color: 0xf5d76e, side: THREE.DoubleSide });
@@ -1988,6 +3186,55 @@ export function initWizardChess() {
       selMesh.position.set(selPos.x, BOARD_SURFACE_Y + 0.01, selPos.z);
       squareHighlightsGroup.add(selMesh);
 
+      // No Modo Pombo:
+      // Por padrão a ausência de cores é mantida (doveHintsVisible === false).
+      // Quando o jogador clica em "Show UI", as movimentações são habilitadas.
+      if (doveMode) {
+        if (!doveHintsVisible) {
+          return;
+        }
+        for (const m of moves) {
+          const pos = boardToWorld(m.r, m.c);
+          if (m.isDoveTarget) {
+            const capGeo = new THREE.RingGeometry(0.12, 0.165, 32);
+            capGeo.rotateX(-Math.PI / 2);
+            const capMat = new THREE.MeshBasicMaterial({ color: 0xb5179e, side: THREE.DoubleSide });
+            const capMesh = new THREE.Mesh(capGeo, capMat);
+            capMesh.position.set(pos.x, BOARD_SURFACE_Y + 0.012, pos.z);
+            squareHighlightsGroup.add(capMesh);
+          } else if (m.inDoveRadius) {
+            const capGeo = new THREE.RingGeometry(0.115, 0.155, 32);
+            capGeo.rotateX(-Math.PI / 2);
+            const capMat = new THREE.MeshBasicMaterial({ color: 0xf4a261, side: THREE.DoubleSide });
+            const capMesh = new THREE.Mesh(capGeo, capMat);
+            capMesh.position.set(pos.x, BOARD_SURFACE_Y + 0.011, pos.z);
+            squareHighlightsGroup.add(capMesh);
+          } else if (m.isLegal) {
+            const capGeo = new THREE.RingGeometry(0.115, 0.155, 32);
+            capGeo.rotateX(-Math.PI / 2);
+            const capMat = new THREE.MeshBasicMaterial({ color: 0xe63946, side: THREE.DoubleSide });
+            const capMesh = new THREE.Mesh(capGeo, capMat);
+            capMesh.position.set(pos.x, BOARD_SURFACE_Y + 0.011, pos.z);
+            squareHighlightsGroup.add(capMesh);
+          } else {
+            const dotGeo = new THREE.CircleGeometry(0.06, 24);
+            dotGeo.rotateX(-Math.PI / 2);
+            const dotMat = new THREE.MeshBasicMaterial({
+              color: 0x4ea8de,
+              transparent: true,
+              opacity: 0.85,
+              side: THREE.DoubleSide
+            });
+            const dotMesh = new THREE.Mesh(dotGeo, dotMat);
+            dotMesh.position.set(pos.x, BOARD_SURFACE_Y + 0.01, pos.z);
+            squareHighlightsGroup.add(dotMesh);
+          }
+        }
+        return;
+      }
+
+      // Modo Normal: garanta que a ausência de cores é SOMENTE no modo pombo!
+      // No modo normal (1 Jogador vs IA ou 2 Jogadores local), todas as cores, capturas e movimentos são sempre exibidos:
       for (const m of moves) {
         const pos = boardToWorld(m.r, m.c);
         if (m.capture) {
@@ -2815,6 +4062,7 @@ export function initWizardChess() {
     }
 
     function maybeScheduleAIMove() {
+      if (doveMode) return;
       if (aiTimer) {
         clearTimeout(aiTimer);
         aiTimer = null;
@@ -3245,6 +4493,10 @@ export function initWizardChess() {
       if (btnHide) {
         btnHide.textContent = shouldHide ? 'Show UI [H]' : 'Hide UI [H]';
       }
+      const btnShow = document.getElementById('btn-show-ui');
+      if (btnShow) {
+        btnShow.disabled = !shouldHide;
+      }
       return shouldHide;
     }
 
@@ -3668,8 +4920,77 @@ export function initWizardChess() {
 
       turnDot.className = 'turn-dot' + (currentTurn === 'b' ? ' black' : '');
 
+      if (doveMode) {
+        if (modeBadge) {
+          modeBadge.textContent = '🕊️ Modo Pombo';
+        }
+        if (turnText) {
+          turnText.textContent = currentTurn === 'w' ? 'Sua vez' : 'Vez do Pombo...';
+        }
+        if (btnSideToggle) {
+          btnSideToggle.style.display = 'inline-flex';
+          btnSideToggle.textContent = 'Voltar ao Xadrez';
+        }
+        const btnGameMode = document.getElementById('btn-game-mode');
+        if (btnGameMode) {
+          btnGameMode.style.display = 'none';
+        }
+        if (btnAiMove) {
+          btnAiMove.style.display = 'none';
+        }
+        if (roomPill) {
+          roomPill.style.display = 'none';
+        }
+        if (capturedTray) {
+          capturedTray.textContent = `Movimentos: ${doveAbsurdMoves}`;
+        }
+        return;
+      }
+
       const legalMoves = getAllLegalMoves(currentTurn);
       const inCheck = isKingInCheck(currentTurn, boardState);
+      const btnGameMode = document.getElementById('btn-game-mode');
+      if (btnGameMode) {
+        btnGameMode.style.display = 'inline-flex';
+      }
+
+      if (gameMode === 'local') {
+        if (modeBadge) {
+          modeBadge.textContent = '👥 2 Jogadores (Local)';
+        }
+        const turnLabel = currentTurn === 'w' ? 'Vez das Brancas (Jogador 1)' : 'Vez das Pretas (Jogador 2)';
+        if (legalMoves.length === 0) {
+          gameOver = true;
+          if (inCheck) {
+            const winner = currentTurn === 'w' ? 'Pretas (Jogador 2)' : 'Brancas (Jogador 1)';
+            turnText.textContent = `Xeque-mate — ${winner} Venceu!`;
+            if (!checkmateState.active) {
+              triggerCheckmateSequence(currentTurn, currentTurn === 'w' ? 'b' : 'w');
+            }
+          } else {
+            turnText.textContent = 'Empate por afogamento (Stalemate)';
+          }
+        } else {
+          turnText.textContent = inCheck ? `${turnLabel} (Xeque!)` : turnLabel;
+        }
+        if (btnSideToggle) {
+          btnSideToggle.style.display = 'none';
+        }
+        if (btnAiMove) {
+          btnAiMove.style.display = 'inline-flex';
+          btnAiMove.textContent = 'Dica da IA';
+        }
+        if (roomPill) {
+          roomPill.style.display = 'none';
+        }
+        if (capturedByWhite > 0 || capturedByBlack > 0) {
+          capturedTray.textContent = `Capturas — Brancas: ${capturedByWhite} | Pretas: ${capturedByBlack}`;
+        } else {
+          capturedTray.textContent = '';
+        }
+        if (typeof updateScriptBarUI === 'function') updateScriptBarUI();
+        return;
+      }
 
       if (legalMoves.length === 0) {
         gameOver = true;
@@ -3700,6 +5021,7 @@ export function initWizardChess() {
       }
       if (btnAiMove) {
         btnAiMove.style.display = 'inline-flex';
+        btnAiMove.textContent = 'AI Move';
       }
       if (btnSideToggle) {
         btnSideToggle.style.display = 'inline-flex';
@@ -3751,6 +5073,9 @@ export function initWizardChess() {
           }
         }
       }
+      if (doveMode && doveModel && doveModel.root) {
+        pieceMeshes.push(doveModel.root);
+      }
 
       const hits = raycaster.intersectObjects([...pieceMeshes, ...boardSquareMeshes], true);
       if (hits.length === 0) {
@@ -3765,6 +5090,11 @@ export function initWizardChess() {
       let clickedC = -1;
       let obj = hits[0].object;
       while (obj) {
+        if (doveMode && (obj.userData?.isDove || obj === doveModel?.root)) {
+          clickedR = doveR;
+          clickedC = doveC;
+          break;
+        }
         if (obj.userData && obj.userData.piece) {
           clickedR = obj.userData.piece.r;
           clickedC = obj.userData.piece.c;
@@ -3786,21 +5116,32 @@ export function initWizardChess() {
       }
 
       if (selectedSquare) {
-        const move = validMoves.find(
-          (m) =>
-            (m.r === clickedR && m.c === clickedC) ||
-            (m.castle && m.r === clickedR && m.rookFromC === clickedC)
-        );
-        if (move) {
-          executeChessMove(selectedSquare.r, selectedSquare.c, move.r, move.c);
-          return;
+        if (doveMode) {
+          if (clickedR !== selectedSquare.r || clickedC !== selectedSquare.c) {
+            handleDoveModeMove(selectedSquare.r, selectedSquare.c, clickedR, clickedC);
+            return;
+          }
+        } else {
+          const move = validMoves.find(
+            (m) =>
+              (m.r === clickedR && m.c === clickedC) ||
+              (m.castle && m.r === clickedR && m.rookFromC === clickedC)
+          );
+          if (move) {
+            executeChessMove(selectedSquare.r, selectedSquare.c, move.r, move.c);
+            return;
+          }
         }
       }
 
       const clickedPiece = boardState[clickedR][clickedC];
       if (clickedPiece && clickedPiece.color === currentTurn) {
         selectedSquare = { r: clickedR, c: clickedC };
-        validMoves = getLegalMovesForPiece(clickedR, clickedC);
+        if (doveMode) {
+          validMoves = getDoveMovesForPiece(clickedR, clickedC);
+        } else {
+          validMoves = getLegalMovesForPiece(clickedR, clickedC);
+        }
         showSquareHighlights(clickedR, clickedC, validMoves);
       } else {
         clearSquareHighlights();
@@ -4229,6 +5570,16 @@ export function initWizardChess() {
     document.getElementById('btn-cam-side')?.addEventListener('click', () => setCameraPreset('side'));
     document.getElementById('btn-cam-wide')?.addEventListener('click', () => setCameraPreset('wide'));
     document.getElementById('btn-hide-ui')?.addEventListener('click', () => toggleUI());
+    document.getElementById('btn-show-ui')?.addEventListener('click', () => {
+      toggleUI(false);
+      if (doveMode) {
+        toggleDoveHints();
+      }
+    });
+
+    document.getElementById('btn-game-mode')?.addEventListener('click', () => {
+      toggleGameMode();
+    });
 
     document.getElementById('btn-script-modal')?.addEventListener('click', () => openLobbyModal('script'));
     document.getElementById('btn-script-prev')?.addEventListener('click', () => stepScriptBackward());
@@ -4239,12 +5590,34 @@ export function initWizardChess() {
     });
 
     document.getElementById('btn-side-toggle')?.addEventListener('click', () => {
+      if (doveMode) {
+        toggleDoveMode(false);
+        return;
+      }
       if (gameMode !== 'single') return;
       playerColor = playerColor === 'w' ? 'b' : 'w';
       resetChessBoard(true, scriptedGameActive);
     });
 
+    document.getElementById('btn-dove-mode')?.addEventListener('click', () => {
+      toggleDoveMode();
+    });
+
+    document.getElementById('btn-dove-retry')?.addEventListener('click', () => {
+      document.getElementById('dove-defeat-overlay')?.classList.remove('visible');
+      startDoveMode();
+    });
+
+    document.getElementById('btn-dove-exit')?.addEventListener('click', () => {
+      document.getElementById('dove-defeat-overlay')?.classList.remove('visible');
+      toggleDoveMode(false);
+    });
+
     document.getElementById('btn-reset')?.addEventListener('click', async () => {
+      if (doveMode) {
+        startDoveMode();
+        return;
+      }
       if (gameMode === 'multi' && roomCode) {
         const stRoom = getStaticRoom(roomCode);
         if (stRoom) {
@@ -4430,6 +5803,15 @@ export function initWizardChess() {
       executeChessMove,
       triggerAIMoveNow,
       resetChessBoard,
+      toggleDoveMode: (force) => toggleDoveMode(force),
+      startDoveMode: () => startDoveMode(),
+      isDoveMode: () => doveMode,
+      toggleDoveHints: (force) => toggleDoveHints(force),
+      isDoveHintsVisible: () => doveHintsVisible,
+      toggleGameMode: (mode) => toggleGameMode(mode),
+      getGameMode: () => gameMode,
+      setGameMode: (mode) => toggleGameMode(mode),
+      getDoveAbsurdMoves: () => doveAbsurdMoves,
       openLobbyModal,
       closeLobbyModal,
       toggleUI,
@@ -4717,7 +6099,20 @@ export function initWizardChess() {
       }
 
       for (let i = activeMoveTweens.length - 1; i >= 0; i--) {
-        const done = activeMoveTweens[i](dt);
+        const tween = activeMoveTweens[i];
+        let done = false;
+        try {
+          if (typeof tween === 'function') {
+            done = tween(dt);
+          } else if (tween && typeof tween.update === 'function') {
+            done = tween.update(dt);
+          } else {
+            done = true;
+          }
+        } catch (err) {
+          console.error("Tween error:", err);
+          done = true;
+        }
         if (done) activeMoveTweens.splice(i, 1);
       }
 
@@ -4811,7 +6206,7 @@ export function initWizardChess() {
         }
       }
 
-      if (activeCamTransition && !isAnimatingMove) {
+      if (activeCamTransition) {
         activeCamTransition.elapsed += dt;
         const u = Math.min(1, activeCamTransition.elapsed / activeCamTransition.duration);
         const ease = easeInOutCubic(u);
@@ -4906,7 +6301,14 @@ export function initWizardChess() {
           Math.cos(elapsedTotal * 9.1 + i) * 0.16;
       }
 
-      if (isAnimatingMove || activeMoveTweens.length > 0 || shatterDebris.length > 0 || checkmateState.active) {
+      if (doveModel) {
+        updateDoveAnimations(dt);
+      }
+      if (toppledPieces.length > 0) {
+        updateToppledPieces(dt);
+      }
+
+      if (isAnimatingMove || activeMoveTweens.length > 0 || shatterDebris.length > 0 || checkmateState.active || doveRageState) {
         renderer.shadowMap.needsUpdate = true;
       }
 
